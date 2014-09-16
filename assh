@@ -230,4 +230,4 @@ fi
 # fork_check
 
 # Requires a pseudo-tty.
-ssh -t $args "$Hostname" "$payload"
+exec ssh -t $args "$Hostname" "$payload"
