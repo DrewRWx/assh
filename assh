@@ -1,0 +1,233 @@
+#!/bin/sh
+# [SublimeLinter shellcheck-exclude:SC2029 ]
+# - Ignore client side expansion on final line.
+
+#---
+
+# Copyright (c) 2014, Drew Waranis
+# All rights reserved.
+
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# The views and conclusions contained in the software and documentation are those
+# of the authors and should not be interpreted as representing official policies,
+# either expressed or implied, of the FreeBSD Project.
+
+#---
+
+# Features:
+# Shell forward / override.
+# Pick home directory.
+
+# TODO:
+# Technical debt:
+# - Reduce forking: expr, et al.
+# - Refactor stripper to not use eval.
+# Feature:
+# - Save shell history in "$HomeSelect".
+
+# Resources:
+# http://www.etalabs.net/sh_tricks.html (Rich).
+
+# Make echo safe (Rich).
+echo () { printf %s\\n "$*" ; }
+
+# Check number of forks.
+fork_check () {
+	second=$(bash -c 'echo $$')
+	echo $((second-$$))
+}
+
+# Strips the first entry (usually the KeyWord) from the line.
+# Takes the name of the variable that should be stripped.
+stripper () {
+	eval temp="\$$1"
+	read -r hide rest <<-EOF
+		$temp
+	EOF
+	eval "$1=\${rest}"
+}
+
+
+# If there are dashed arguments before the hostname, insert them into args.
+# Redirect stdout to silence expr's output.
+if expr "$1" : '^-' >/dev/null; then
+	# Grab the first argument individually to avoid a leading whitespace and remove it.
+	args="$1"
+	shift
+
+	for arg in "$@"; do
+		if expr "$arg" : '^-' >/dev/null; then
+			args="$args $arg"
+			shift
+		fi
+		break
+	done
+fi
+
+Hostname="$1"
+shift
+
+# If there are arguments after the hostname, insert them into a command_string argument.
+if [ -n "$1" ]; then
+	# This argument order is supported by fish.
+  comms="-i -c \"${1}"
+  shift
+
+  for comm in "$@"; do
+		comms="$comms $comm"
+		shift
+	done
+	comms="${comms}\""
+else
+	comms=""
+fi
+
+
+# Get the absolute path to the script.
+# This method prevents an issue if the directory name has a trailing newline (rich).
+appended_relative=$(dirname "$0" ; echo x)
+sanitized_relative=${appended_relative%??}
+appended_absolute="$( cd "$sanitized_relative" && pwd; echo x)"
+sanitized_absolute=${appended_absolute%??}
+
+# Looks for .asshrc in order of my preferred preference locations.
+config="${HOME}/.ssh/.asshrc"
+if [ ! -f "$config" ]; then config="${HOME}/.asshrc"; fi
+if [ ! -f "$config" ]; then config="${HOME}/.config/.asshrc"; fi
+if [ ! -f "$config" ]; then config="${sanitized_absolute}/.asshrc"; fi
+if [ ! -f "$config" ]; then config=""; fi
+
+# Neuter functionality if .asshrc is not found.
+if [ -f "$config" ]; then
+	# Explicitly define rc before it is appended.
+	rc=""
+	# Default to appending lines from .asshrc until a "Host" line is reached.
+	emit=true
+
+	# Disables file globbing in case an asterisk is used in a .asshrc.
+	set -f
+	# Extract matching stanzas from .asshrc.
+	# Unsetting IFS keeps each line's indentation.
+	# The OR statement saves those that didn't put a newline at the end of their .asshrc.
+	while IFS= read -r line || [ -n "$line" ]; do
+		# Decide whether the the next stanza applies to the remote's hostname.
+		if expr "$line" : '^[[:blank:]]*Host' >/dev/null; then
+			# Strip "Host" from the beginning of the list.
+			stripper line
+			# Default to ignoring this stanza unless a regex on this line matches.
+			emit=false
+
+			# Compare each regex on the line against the hostname.
+			for regex in $line; do
+				# If one matches the hostname, enable this stanza and continue the outer loop.
+				# The "Host" line is not printed.
+				if expr "$Hostname" : "$regex" >/dev/null; then emit=true; continue 2; fi
+			done
+		fi
+
+		# Check if a shell is specified.
+		if $emit && expr "$line" : '^[[:blank:]]*ShellSelect' >/dev/null; then
+			stripper line
+			forwarded_shell=$line
+			continue
+		fi
+
+		# Check if a home directory is specified.
+		if $emit && expr "$line" : '^[[:blank:]]*HomeSelect' >/dev/null; then
+			stripper line
+			home_select=$line
+			continue
+		fi
+
+		# If enabled, append lines to this variable.
+		if $emit; then
+			rc="${rc}${line}
+			   "
+		fi
+	done < "$config"
+	set +f
+
+
+	# Set forwarded_shell to the local shell name if none were selected in .asshrc.
+	forwarded_shell=${forwarded_shell=${SHELL##*/}}
+
+	# Set the SHELL environment variable to forwarded_shell.
+	rc="${rc}
+			SHELL=${forwarded_shell}
+		 "
+
+
+	# Set the HOME environment variable if home_select was defined in .asshrc.
+	# Move to that directory.
+	if [ -n "$home_select" ]; then
+		rc="${rc}
+				export HOME=${home_select}
+				cd \$HOME"
+	fi
+
+	# Only make a shell's rc file if it is selected.
+	# Appends command_string if sufficient args were provided.
+	case "$forwarded_shell" in
+		zsh )
+			# Sent if using zsh on the remote machine.
+			# Abuses ZDOTDIR by dropping a .zshrc in a temp directory.
+			# \$ used to avoid early expansion on this machine.
+			# Heredoc delimiter single quoted to avoid early expansion on remote machine.
+			# And cash sign escaped to prevent early expansion on this machine.
+			payload="
+				temp_dir=\$(mktemp -d);
+				cat <<-'EOF' > \$temp_dir/.zshrc
+					source ~/.zshrc;
+					${rc}
+				EOF
+				ZDOTDIR=\$temp_dir zsh ${comms}
+			"
+		;;
+		bash )
+			# Sent if using bash on the remote machine.
+			# Abuses --rcfile by handing it a file on the commandline that we make on the fly.
+			payload="
+				bash --rcfile <(echo '
+					source ~/.bashrc
+					${rc}
+				') ${comms}
+			"
+		;;
+		# Tries to at least use exported variables with other shells.
+		* )
+			payload="
+			${rc}
+			${forwarded_shell} ${comms}
+			"
+		;;
+	esac
+else
+	echo "No configuration file found!"
+	echo "Falling back to shell forwarding."
+	payload="${forwarded_shell} ${comms}"
+fi
+
+# TODO: Reduce this number.
+# fork_check
+
+# Requires a pseudo-tty.
+ssh -t $args "$Hostname" "$payload"
