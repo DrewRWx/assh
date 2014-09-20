@@ -1,7 +1,8 @@
 assh
 ========
 
-Send your shell preferences to a shared account for an SSH session.
+Purged of all bashisms and able to be run anywhere.
+
 * Set your shell.
 * Set your home directory.
 * Set your variables and aliases.
@@ -53,7 +54,7 @@ bindkey \^U backward-kill-line;
 # Hostnames on the "Host" line are matched by regex.
 # For example, the first entry matches 'machine' followed by two numbers.
 Host machine[0-1][0-9] old03 virtual
-	export PATH=/alloshare/drew/local/bin:$PATH;
+	export PATH=/nas/drew/local/bin:$PATH;
 
 	# Executing parts of .asshrc also allow for scripting.
 	# The shared machines I use default to bash and uses a lot of aliases, hence:
