@@ -39,6 +39,7 @@
 
 # TODO:
 # Technical debt:
+# - Make the argument handing less dumb.
 # - Reduce forking: expr, et al.
 # - Refactor stripper to not use eval.
 # Feature:
@@ -66,22 +67,36 @@ stripper () {
 	eval "$1=\${rest}"
 }
 
+# Get the absolute path to the script.
+# This method prevents an issue if the directory name has a trailing newline (rich).
+appended_relative=$(dirname "$0" ; echo x)
+sanitized_relative=${appended_relative%??}
+appended_absolute="$( cd "$sanitized_relative" && pwd; echo x)"
+sanitized_absolute=${appended_absolute%??}
 
-# If there are dashed arguments before the hostname, insert them into args.
+# Looks for .asshrc in order of my preferred preference locations.
+config="${HOME}/.ssh/.asshrc"
+if [ ! -f "$config" ]; then config="${HOME}/.asshrc"; fi
+if [ ! -f "$config" ]; then config="${HOME}/.config/.asshrc"; fi
+if [ ! -f "$config" ]; then config="${sanitized_absolute}/.asshrc"; fi
+if [ ! -f "$config" ]; then config=""; fi
+
+config_file="$(cat "$config"; printf a)"
+config_file="${config_file%a}"
+
+# MAKE LESS DUMB!
+# - Use regex instead of glob.
+# - Find less expensive method to falls back to ssh if hostname isn't defined.
+# Append each argument to args until one matches a Hostname defined in .asshrc.
 # Redirect stdout to silence expr's output.
-if expr "$1" : '^-' >/dev/null; then
-	# Grab the first argument individually to avoid a leading whitespace and remove it.
-	args="$1"
-	shift
+for arg in "$@"; do
+	case "$config_file" in
+		(*Host*"$arg"*)  break;;
+	esac
 
-	for arg in "$@"; do
-		if expr "$arg" : '^-' >/dev/null; then
-			args="$args $arg"
-			shift
-		fi
-		break
-	done
-fi
+	args="$args $arg"
+	shift
+done
 
 Hostname="$1"
 shift
@@ -101,20 +116,6 @@ else
 	comms=""
 fi
 
-
-# Get the absolute path to the script.
-# This method prevents an issue if the directory name has a trailing newline (rich).
-appended_relative=$(dirname "$0" ; echo x)
-sanitized_relative=${appended_relative%??}
-appended_absolute="$( cd "$sanitized_relative" && pwd; echo x)"
-sanitized_absolute=${appended_absolute%??}
-
-# Looks for .asshrc in order of my preferred preference locations.
-config="${HOME}/.ssh/.asshrc"
-if [ ! -f "$config" ]; then config="${HOME}/.asshrc"; fi
-if [ ! -f "$config" ]; then config="${HOME}/.config/.asshrc"; fi
-if [ ! -f "$config" ]; then config="${sanitized_absolute}/.asshrc"; fi
-if [ ! -f "$config" ]; then config=""; fi
 
 # Neuter functionality if .asshrc is not found.
 if [ -f "$config" ]; then
