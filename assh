@@ -84,15 +84,24 @@ if [ ! -f "$config" ]; then config=""; fi
 config_file="$(cat "$config"; printf a)"
 config_file="${config_file%a}"
 
-# MAKE LESS DUMB!
-# - Use regex instead of glob.
-# - Find less expensive method to falls back to ssh if hostname isn't defined.
+# TODO: Find less expensive method that falls back to ssh if hostname isn't defined.
+# Reads through .asshrc and appends all defined hostnames.
+hostname_list=""
+set -f
+while IFS= read -r line || [ -n "$line" ]; do
+	if expr "$line" : '^[[:blank:]]*Host' >/dev/null; then
+		stripper line
+		hostname_list="$hostname_list $line"
+	fi
+done < "$config"
+set +f
+
 # Append each argument to args until one matches a Hostname defined in .asshrc.
-# Redirect stdout to silence expr's output.
 for arg in "$@"; do
-	case "$config_file" in
-		(*Host*"$arg"*)  break;;
-	esac
+	for possible_hostname in $hostname_list; do
+		# Breaks out of two loops.
+		if expr "$arg" : "$possible_hostname" >/dev/null; then break 2; fi
+	done
 
 	args="$args $arg"
 	shift
