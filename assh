@@ -204,7 +204,8 @@ if [ -f "$config" ]; then
 			# Heredoc delimiter single quoted to avoid early expansion on remote machine.
 			# And cash sign escaped to prevent early expansion on this machine.
 			payload="
-				temp_dir=\$(mktemp -d);
+        # Accounts for OS X's mktemp requiring a directory name template.
+				temp_dir=\$(mktemp -d 2>/dev/null || mktemp -d -t 'tmp');
 				cat <<-'EOF' > \$temp_dir/.zshrc
 					source ~/.zshrc;
 					${rc}
