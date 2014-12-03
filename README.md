@@ -94,7 +94,7 @@ Drop it into your PATH .
 Tested on:
 
 * OS X Maverick's _bash_ in _sh_ compatibility mode.
-* Ubuntu 13.04 an 14.04's _dash_.
+* Ubuntu 13.04 and 14.04's _dash_.
 
 License
 ------------
