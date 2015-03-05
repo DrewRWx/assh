@@ -68,7 +68,7 @@ stripper () {
 }
 
 # Get the absolute path to the script.
-# This method prevents an issue if the directory name has a trailing newline (rich).
+# This method prevents an issue if the directory name has a trailing newline (Rich).
 appended_relative=$(dirname "$0" ; echo x)
 sanitized_relative=${appended_relative%??}
 appended_absolute="$( cd "$sanitized_relative" && pwd; echo x)"
